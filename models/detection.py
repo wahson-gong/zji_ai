@@ -6,12 +6,12 @@ import base64
 import requests
 import subprocess
 import os
-import sys
 import onnxruntime as ort  # 主要使用 ONNX Runtime
 from collections import defaultdict
 from config import Config
 from models.algorithm import AlgorithmManager
 import logging
+from config import Config  # 确保导入 Config
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class DetectionTask:
         try:
             # 构建FFmpeg命令
             command = [
-                'ffmpeg',
+                Config.FFMPEG_PATH,  # 使用配置中的路径
                 '-y',  # 覆盖输出文件
                 '-f', 'rawvideo',
                 '-vcodec', 'rawvideo',
@@ -81,6 +81,9 @@ class DetectionTask:
             return True
         except Exception as e:
             logger.error(f"初始化FFmpeg失败: {str(e)}")
+            # 添加更详细的错误信息
+            logger.error(f"请确保FFmpeg已安装并添加到系统路径，或检查Config.FFMPEG_PATH配置")
+            logger.error(f"当前FFmpeg路径: {Config.FFMPEG_PATH}")
             return False
 
     def _push_frame_to_rtmp(self, frame):
@@ -108,8 +111,26 @@ class DetectionTask:
     def _run_detection(self):
         """检测主循环"""
         # 打开视频流
-        cap = cv2.VideoCapture(self.task_data['stream_url'])
-        if not cap.isOpened():
+        cap = None
+        max_retries = 5
+        retry_count = 0
+
+        while retry_count < max_retries and self.is_running:
+            try:
+                logger.warning(f"尝试连接视频流: {self.task_data['stream_url']}")
+                cap = cv2.VideoCapture(self.task_data['stream_url'])
+                if cap.isOpened():
+                    break
+                else:
+                    logger.warning(f"视频流连接失败 ({retry_count + 1}/{max_retries})")
+                    time.sleep(2)  # 等待2秒后重试
+                    retry_count += 1
+            except Exception as e:
+                logger.error(f"打开视频流异常: {str(e)}")
+                time.sleep(2)
+                retry_count += 1
+
+        if not cap or not cap.isOpened():
             logger.error(f"无法打开视频流: {self.task_data['stream_url']}")
             return
 
@@ -117,6 +138,12 @@ class DetectionTask:
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 0:
             fps = 25  # 默认帧率
+            logger.warning(f"无法获取视频流FPS，使用默认值: {fps}")
+
+        # 获取视频流宽度和高度
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        logger.info(f"视频流信息: {width}x{height} @ {fps:.2f} FPS")
 
         # 加载所有需要的模型
         for algo_id in self.task_data['algorithm_ids']:
@@ -125,16 +152,32 @@ class DetectionTask:
         # 主处理循环
         frame_count = 0
         last_report_time = time.time()
+        consecutive_failures = 0
+        max_consecutive_failures = 10  # 最大连续失败次数
 
-        while self.is_running and cap.isOpened():
+        while self.is_running:
             start_time = time.time()
 
             # 读取帧
             ret, frame = cap.read()
             if not ret:
-                logger.warning("读取视频帧失败")
-                time.sleep(0.1)
+                consecutive_failures += 1
+                logger.warning(f"读取视频帧失败 ({consecutive_failures}/{max_consecutive_failures})")
+
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error("连续读取失败次数过多，尝试重新连接视频流")
+                    cap.release()
+                    time.sleep(2)
+                    cap = cv2.VideoCapture(self.task_data['stream_url'])
+                    consecutive_failures = 0
+                    if not cap.isOpened():
+                        logger.error("重新连接视频流失败")
+                        break
+                else:
+                    time.sleep(0.1)
                 continue
+
+            consecutive_failures = 0  # 重置失败计数
 
             # 调整帧大小
             processed_frame = self._resize_frame(frame)
@@ -158,8 +201,9 @@ class DetectionTask:
                     self._report_results(output_frame, algorithm_results)
                     last_report_time = current_time
 
-            # 推送到RTMP
-            self._push_frame_to_rtmp(output_frame)
+            # 尝试推送到RTMP
+            if not self._push_frame_to_rtmp(output_frame):
+                logger.warning("推送到RTMP失败")
 
             # 控制处理速率
             elapsed = time.time() - start_time
@@ -173,7 +217,11 @@ class DetectionTask:
         # 清理资源
         cap.release()
         if self.ffmpeg_process:
-            self.ffmpeg_process.terminate()
+            try:
+                self.ffmpeg_process.terminate()
+                self.ffmpeg_process.wait(timeout=2)
+            except Exception as e:
+                logger.error(f"停止FFmpeg失败: {str(e)}")
         logger.info(f"检测任务结束: {self.task_data['flight_id']}")
 
     def _draw_detection_results(self, frame, algorithm_results):

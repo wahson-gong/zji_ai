@@ -22,3 +22,12 @@ class Config:
     # ONNX推理配置
     ONNX_EXECUTION_PROVIDERS = ['CUDAExecutionProvider', 'CPUExecutionProvider']  # 按顺序尝试
     ONNX_OPTIMIZATION_LEVEL = 3  # ORT_ENABLE_ALL
+
+    # FFmpeg 配置
+    FFMPEG_PATH = 'ffmpeg'  # 默认使用系统路径中的 ffmpeg
+    # 如果系统找不到 ffmpeg，可以在这里指定完整路径
+    # Windows 示例:
+    # FFMPEG_PATH = r'C:\ffmpeg\bin\ffmpeg.exe'
+
+    # Linux/macOS 示例:
+    # FFMPEG_PATH = '/usr/bin/ffmpeg'
