@@ -7,6 +7,7 @@ from datetime import datetime
 from tqdm import tqdm  # 用于显示进度条
 from config import Config
 import logging
+import onnxruntime as ort
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class AlgorithmManager:
         yaml_path = AlgorithmManager._generate_yolo_config(data, algo_dir)
 
         # 下载模型文件 - 使用算法ID作为文件名
-        model_path = os.path.join(algo_dir, f"{data['algorithm_id']}.pt")
+        model_path = os.path.join(algo_dir, f"{data['algorithm_id']}.onnx")
         download_success = AlgorithmManager._download_model(
             data['model_file_url'],
             model_path

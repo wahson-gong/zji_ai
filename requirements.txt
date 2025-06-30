@@ -1,7 +1,7 @@
 flask==2.3.2
 requests==2.31.0
 opencv-python==4.8.0.76
-ultralytics==8.0.196
-pyyaml==6.0.1
+onnxruntime==1.16.3  # 或者 onnxruntime-gpu
 numpy==1.24.3
 python-dotenv==1.0.0
+pyyaml==6.0.1

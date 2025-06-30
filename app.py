@@ -2,16 +2,15 @@ from flask import Flask
 from config import Config
 from services.algorithm_service import import_ai_algorithm
 from services.detection_service import start_ai_stream_push, stop_ai_stream_push
-from services.callback_service import handle_algorithm_callback
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
 # 注册路由
-app.add_url_rule('/import_ai_algorithm', view_func=import_ai_algorithm, methods=['POST'])
-app.add_url_rule('/start_ai_stream_push', view_func=start_ai_stream_push, methods=['POST'])
-app.add_url_rule('/stop_ai_stream_push', view_func=stop_ai_stream_push, methods=['POST'])
-app.add_url_rule('/callback', view_func=handle_algorithm_callback, methods=['POST'])
+app.add_url_rule('/api/v1/algorithm/import', view_func=import_ai_algorithm, methods=['POST'])
+app.add_url_rule('/api/v1/ai/stream/start', view_func=start_ai_stream_push, methods=['POST'])
+app.add_url_rule('/api/v1/ai/stream/stop', view_func=stop_ai_stream_push, methods=['POST'])
+
 
 @app.route('/')
 def health_check():
