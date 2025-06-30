@@ -1,0 +1,26 @@
+{
+  "algorithm_id": "0fc6679e-e115-4005-8b7a-853d3e477a90",
+  "algorithm_name": "\u8f66\u8f86\u68c0\u6d4b\u7b97\u6cd5",
+  "confidence": 0.7,
+  "iou": 0.5,
+  "algorithm_params": [
+    {
+      "key": "img_size",
+      "value": "640"
+    },
+    {
+      "key": "batch_size",
+      "value": "16"
+    }
+  ],
+  "model_file_url": "http://192.168.0.20:10051/drone/manage/api/v1/workspaces/08917ea3-d6c6-4104-bc62-60be953f851f/file/download?path=uploads/08917ea3-d6c6-4104-bc62-60be953f851f/other/best_20250630_bdd2f74f.onnx&x-auth-token=Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTEyNzE1NjEsImlhdCI6MTc1MTI2MzE2MSwicm9sZUlkIjoic3lzX2FkbWluIiwicm9sZUtleSI6InN5c19hZG1pbiIsInVzZXJJZCI6IjNmYjhhN2ZlLTg5N2QtNGI4Ny05MGRhLTg1OTY3MDQ2YjcxZCIsInVzZXJOYW1lIjoi6LaF57qn566h55CG5ZGYIiwidXNlclR5cGUiOjEsIndvcmtzcGFjZUlkIjoiMDg5MTdlYTMtZDZjNi00MTA0LWJjNjItNjBiZTk1M2Y4NTFmIn0.kaQXFk-MNQ1fI42VQqNOB0j_0IXoL0WZscJ9DLxO_vo",
+  "callback_url": "http://192.168.0.20:10051/drone/manage/api/v1/workspaces/08917ea3-d6c6-4104-bc62-60be953f851f/ai/algorithm/importLibraryCallback?algorithm_id=0fc6679e-e115-4005-8b7a-853d3e477a90&x-auth-token=Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTEyNzE1NjEsImlhdCI6MTc1MTI2MzE2MSwicm9sZUlkIjoic3lzX2FkbWluIiwicm9sZUtleSI6InN5c19hZG1pbiIsInVzZXJJZCI6IjNmYjhhN2ZlLTg5N2QtNGI4Ny05MGRhLTg1OTY3MDQ2YjcxZCIsInVzZXJOYW1lIjoi6LaF57qn566h55CG5ZGYIiwidXNlclR5cGUiOjEsIndvcmtzcGFjZUlkIjoiMDg5MTdlYTMtZDZjNi00MTA0LWJjNjItNjBiZTk1M2Y4NTFmIn0.kaQXFk-MNQ1fI42VQqNOB0j_0IXoL0WZscJ9DLxO_vo",
+  "targets": [
+    {
+      "target_key": "0",
+      "target_name": "car"
+    }
+  ],
+  "model_path": "uploads/08917ea3-d6c6-4104-bc62-60be953f851f/other/best_20250630_bdd2f74f.onnx",
+  "local_model_path": "C:\\my_code\\zji_ai_service\\storage\\algorithms\\0fc6679e-e115-4005-8b7a-853d3e477a90\\0fc6679e-e115-4005-8b7a-853d3e477a90.onnx"
+}

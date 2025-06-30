@@ -31,3 +31,20 @@ class Config:
 
     # Linux/macOS 示例:
     # FFMPEG_PATH = '/usr/bin/ffmpeg'
+
+    # 大疆无人机配置
+    DJI_DEFAULT_RESOLUTION = (1920, 1080)  # 默认分辨率
+    DJI_DEFAULT_FPS = 30  # 默认帧率
+
+    # FFmpeg 高级配置
+    FFMPEG_READ_TIMEOUT = 10  # 读取超时(秒)
+    FFMPEG_RECONNECT_DELAY = 2  # 重连延迟(秒)
+
+    # FFmpeg 配置
+    FFMPEG_DEBUG_LOGGING = True  # 启用FFmpeg调试日志
+    FFMPEG_RESTART_LIMIT = 5  # FFmpeg最大重启次数
+    FFMPEG_BUFFER_SIZE = 10 ** 7  # 10MB缓冲区
+
+    # 推流配置
+    RTMP_CONNECT_TIMEOUT = 5  # RTMP连接超时(秒)
+    RTMP_RECONNECT_DELAY = 1  # 重连延迟(秒)

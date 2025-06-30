@@ -6,15 +6,72 @@ import base64
 import requests
 import subprocess
 import os
-import onnxruntime as ort  # 主要使用 ONNX Runtime
+import sys
+import onnxruntime as ort
 from collections import defaultdict
 from config import Config
 from models.algorithm import AlgorithmManager
 import logging
-from config import Config  # 确保导入 Config
+import re
+import json
 
 logger = logging.getLogger(__name__)
 
+
+class DJIStreamDecoder:
+    """大疆无人机流解码器"""
+
+    @staticmethod
+    def is_dji_stream(stream_url):
+        """检查是否是大疆无人机流"""
+        return "rtmp://" in stream_url and "live/" in stream_url and "FJ" in stream_url
+
+    @staticmethod
+    def get_dji_stream_info(stream_url):
+        """从流URL中提取大疆无人机信息"""
+        match = re.search(r'live/([A-Z0-9]+)-(\d+)-(\d+)-(\d+)', stream_url)
+        if match:
+            return {
+                "device_id": match.group(1),
+                "video_type": int(match.group(2)),
+                "resolution": int(match.group(3)),
+                "fps": int(match.group(4))
+            }
+        return None
+
+    @staticmethod
+    def get_dji_resolution(resolution_code):
+        """根据大疆分辨率代码获取实际分辨率"""
+        resolutions = {
+            0: (4096, 2160),  # 4K
+            1: (3840, 2160),  # 4K UHD
+            2: (2720, 1530),  # 2.7K
+            3: (1920, 1080),  # 1080p
+            4: (1280, 720),  # 720p
+            5: (1920, 1080),  # 1080i
+        }
+        return resolutions.get(resolution_code, (1920, 1080))
+
+    @staticmethod
+    def get_dji_decoder_command(stream_url, width, height):
+        """获取大疆专用解码命令"""
+        # 大疆专用解码参数
+        return [
+            Config.FFMPEG_PATH,
+            '-hide_banner',
+            '-loglevel', 'warning',
+            '-fflags', 'nobuffer',
+            '-analyzeduration', '1000000',  # 减少分析时间
+            '-probesize', '32',  # 减少探测大小
+            '-f', 'flv',  # 强制输入格式为FLV
+            '-i', stream_url,
+            '-c:v', 'h264',  # 指定H.264解码器
+            '-flags', 'low_delay',  # 低延迟模式
+            '-strict', 'experimental',  # 允许实验性功能
+            '-f', 'rawvideo',
+            '-pix_fmt', 'bgr24',  # OpenCV使用的格式
+            '-'
+        ]
 
 class DetectionTask:
     def __init__(self, task_data, ai_stream_url):
@@ -24,6 +81,15 @@ class DetectionTask:
         self.thread = None
         self.model_cache = {}
         self.ffmpeg_process = None
+        self.ffmpeg_input = None
+        self.dji_stream_info = None
+        self.frame_size = None
+        self.frame_shape = None
+
+        # 检查是否是大疆无人机流
+        if DJIStreamDecoder.is_dji_stream(task_data['stream_url']):
+            self.dji_stream_info = DJIStreamDecoder.get_dji_stream_info(task_data['stream_url'])
+            logger.info(f"检测到大疆无人机流: {self.dji_stream_info}")
 
     def start(self):
         """启动检测任务"""
@@ -50,12 +116,20 @@ class DetectionTask:
             except Exception as e:
                 logger.error(f"停止FFmpeg失败: {str(e)}")
 
+        # 停止输入流进程
+        if self.ffmpeg_input:
+            try:
+                self.ffmpeg_input.terminate()
+                self.ffmpeg_input.wait(timeout=2)
+            except Exception as e:
+                logger.error(f"停止输入流进程失败: {str(e)}")
+
     def _init_ffmpeg(self, width, height, fps=25):
-        """初始化FFmpeg推流进程"""
+        """初始化FFmpeg推流进程，添加错误处理"""
         try:
             # 构建FFmpeg命令
             command = [
-                Config.FFMPEG_PATH,  # 使用配置中的路径
+                Config.FFMPEG_PATH,
                 '-y',  # 覆盖输出文件
                 '-f', 'rawvideo',
                 '-vcodec', 'rawvideo',
@@ -71,67 +145,270 @@ class DetectionTask:
                 self.ai_stream_url
             ]
 
-            logger.info(f"启动FFmpeg: {' '.join(command)}")
+            logger.info(f"启动FFmpeg推流: {' '.join(command)}")
+
+            # 创建日志文件
+            ffmpeg_log = open('ffmpeg_push.log', 'a') if Config.FFMPEG_DEBUG_LOGGING else subprocess.DEVNULL
+
             self.ffmpeg_process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE
+                stderr=ffmpeg_log,
+                bufsize=10 ** 7  # 大缓冲区 (10MB)
             )
+
+            # 添加进程检查
+            time.sleep(0.5)  # 等待进程启动
+            if self.ffmpeg_process.poll() is not None:
+                logger.error("FFmpeg进程启动后立即退出，状态码: %s", self.ffmpeg_process.returncode)
+                return False
+
+            logger.info("FFmpeg推流进程启动成功")
             return True
         except Exception as e:
             logger.error(f"初始化FFmpeg失败: {str(e)}")
-            # 添加更详细的错误信息
-            logger.error(f"请确保FFmpeg已安装并添加到系统路径，或检查Config.FFMPEG_PATH配置")
-            logger.error(f"当前FFmpeg路径: {Config.FFMPEG_PATH}")
             return False
 
     def _push_frame_to_rtmp(self, frame):
-        """将帧推送到RTMP流"""
-        if not self.ffmpeg_process:
-            # 第一次运行时初始化FFmpeg
-            height, width = frame.shape[:2]
-            if not self._init_ffmpeg(width, height):
-                return False
-
+        """将帧推送到RTMP流，处理Broken pipe错误"""
         try:
+            # 检查FFmpeg进程是否仍在运行
+            if self.ffmpeg_process and self.ffmpeg_process.poll() is not None:
+                logger.warning("FFmpeg进程已终止，状态码: %s", self.ffmpeg_process.returncode)
+                self.ffmpeg_process = None
+
+            # 如果FFmpeg进程不存在，重新初始化
+            if not self.ffmpeg_process:
+                height, width = frame.shape[:2]
+                if not self._init_ffmpeg(width, height):
+                    logger.error("无法重新初始化FFmpeg推流进程")
+                    return False
+                else:
+                    logger.info("FFmpeg推流进程已重新启动")
+
             # 将帧写入FFmpeg的标准输入
             self.ffmpeg_process.stdin.write(frame.tobytes())
+            self.ffmpeg_process.stdin.flush()  # 确保数据被刷新
             return True
+        except BrokenPipeError:
+            logger.error("Broken pipe错误: FFmpeg管道已断开")
+            # 尝试重新初始化FFmpeg
+            try:
+                if self.ffmpeg_process:
+                    self.ffmpeg_process.terminate()
+            except:
+                pass
+            self.ffmpeg_process = None
+            return False
         except Exception as e:
             logger.error(f"推送帧失败: {str(e)}")
             # 尝试重新初始化FFmpeg
             try:
-                self.ffmpeg_process.terminate()
+                if self.ffmpeg_process:
+                    self.ffmpeg_process.terminate()
             except:
                 pass
             self.ffmpeg_process = None
             return False
 
+    def _init_dji_stream_reader(self):
+        """初始化大疆无人机流读取器"""
+        try:
+            # 获取分辨率
+            if self.dji_stream_info:
+                width, height = DJIStreamDecoder.get_dji_resolution(self.dji_stream_info['resolution'])
+            else:
+                width, height = Config.DJI_DEFAULT_RESOLUTION
+
+            self.frame_size = width * height * 3  # 3通道 (BGR)
+            self.frame_shape = (height, width, 3)
+
+            # 构建大疆专用解码命令
+            command = DJIStreamDecoder.get_dji_decoder_command(
+                self.task_data['stream_url'],
+                width,
+                height
+            )
+
+            logger.info(f"启动大疆专用解码器: {' '.join(command)}")
+
+            # 创建日志文件
+            log_file = open('dji_stream.log', 'w') if Config.DJI_DEBUG_LOGGING else subprocess.DEVNULL
+
+            self.ffmpeg_input = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=log_file,
+                bufsize=10 ** 8  # 大缓冲区
+            )
+
+            logger.info(f"大疆流配置: {width}x{height}, 帧大小: {self.frame_size}字节")
+            return True
+        except Exception as e:
+            logger.error(f"初始化大疆流读取器失败: {str(e)}")
+            return False
+
+    def _read_dji_frame(self):
+        """读取大疆无人机视频帧"""
+        if not self.ffmpeg_input:
+            if not self._init_dji_stream_reader():
+                return None
+
+        try:
+            # 从FFmpeg管道读取原始帧数据
+            raw_frame = self.ffmpeg_input.stdout.read(self.frame_size)
+            if not raw_frame:
+                logger.warning("读取到空帧数据")
+                return None
+
+            if len(raw_frame) != self.frame_size:
+                logger.warning(f"读取帧数据不完整: {len(raw_frame)}/{self.frame_size}字节")
+                return None
+
+            # 将字节数据转换为numpy数组
+            frame = np.frombuffer(raw_frame, dtype=np.uint8)
+            frame = frame.reshape(self.frame_shape)
+            return frame
+        except Exception as e:
+            logger.error(f"读取大疆帧失败: {str(e)}")
+            return None
+
     def _run_detection(self):
         """检测主循环"""
+        # 对于大疆无人机流，使用专用解码器
+        if self.dji_stream_info:
+            return self._run_dji_detection()
+
+        # 对于普通流，使用标准方法
+        return self._run_standard_detection()
+
+    def _run_dji_detection(self):
+        """大疆无人机流专用检测循环"""
+        # 初始化大疆流读取器
+        if not self._init_dji_stream_reader():
+            logger.error("无法初始化大疆流读取器")
+            return
+
+        # 加载所有需要的模型
+        for algo_id in self.task_data['algorithm_ids']:
+            self._load_model(algo_id)
+
+        # 主处理循环
+        frame_count = 0
+        last_report_time = time.time()
+        consecutive_failures = 0
+        max_consecutive_failures = 10
+        last_success_time = time.time()
+
+        # 添加推流重启计数器
+        ffmpeg_restart_count = 0
+
+        while self.is_running:
+            start_time = time.time()
+
+            # 检查超时
+            if time.time() - last_success_time > Config.DJI_STREAM_TIMEOUT:
+                logger.error(f"流读取超时 ({Config.DJI_STREAM_TIMEOUT}秒无数据)")
+                break
+
+            # 读取帧
+            frame = self._read_dji_frame()
+            if frame is None:
+                consecutive_failures += 1
+                logger.warning(f"读取视频帧失败 ({consecutive_failures}/{max_consecutive_failures})")
+
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error("连续读取失败次数过多，尝试重新连接视频流")
+                    self.ffmpeg_input.terminate()
+                    self.ffmpeg_input = None
+                    consecutive_failures = 0
+                    if not self._init_dji_stream_reader():
+                        logger.error("重新连接视频流失败")
+                        break
+                else:
+                    time.sleep(0.1)
+                continue
+
+            # 成功读取帧
+            consecutive_failures = 0
+            last_success_time = time.time()
+
+            # 调整帧大小
+            processed_frame = self._resize_frame(frame)
+
+            # 处理所有算法
+            algorithm_results = []
+            for algo_id in self.task_data['algorithm_ids']:
+                algo_result = self._process_frame(processed_frame, algo_id)
+                if algo_result:
+                    algorithm_results.append(algo_result)
+
+            # 在原始帧上绘制检测结果（用于推送）
+            output_frame = frame.copy()
+            if algorithm_results:
+                # 绘制检测结果到输出帧
+                self._draw_detection_results(output_frame, algorithm_results)
+
+                # 定期上报结果（例如每秒1次）
+                current_time = time.time()
+                if current_time - last_report_time >= 1.0:
+                    self._report_results(output_frame, algorithm_results)
+                    last_report_time = current_time
+
+                    # 推送到RTMP
+                push_success = self._push_frame_to_rtmp(output_frame)
+                if not push_success:
+                    logger.warning("推送到RTMP失败")
+                    ffmpeg_restart_count += 1
+
+                    # 检查是否超过重启限制
+                    if ffmpeg_restart_count > Config.FFMPEG_RESTART_LIMIT:
+                        logger.error("FFmpeg重启次数超过限制，停止推流")
+                        break
+                else:
+                    ffmpeg_restart_count = 0  # 重置计数器
+
+            # 控制处理速率
+            elapsed = time.time() - start_time
+            sleep_time = max(0, Config.FRAME_PROCESS_INTERVAL - elapsed)
+            time.sleep(sleep_time)
+
+            frame_count += 1
+            if frame_count % 100 == 0:
+                logger.info(f"处理帧数: {frame_count}, 当前FPS: {1 / max(0.001, elapsed + sleep_time):.1f}")
+
+        # 清理资源
+        if self.ffmpeg_input:
+            self.ffmpeg_input.terminate()
+        if self.ffmpeg_process:
+            self.ffmpeg_process.terminate()
+        logger.info(f"检测任务结束: {self.task_data['flight_id']}")
+
+    def _run_standard_detection(self):
+        """标准视频流检测循环"""
         # 打开视频流
         cap = None
         max_retries = 5
         retry_count = 0
+        stream_url = self.task_data['stream_url']
 
+        # 使用FFmpeg后端
+        cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
+        logger.info(f"尝试使用FFmpeg后端打开视频流: {stream_url}")
+
+        # 重试机制
         while retry_count < max_retries and self.is_running:
-            try:
-                logger.warning(f"尝试连接视频流: {self.task_data['stream_url']}")
-                cap = cv2.VideoCapture(self.task_data['stream_url'])
-                if cap.isOpened():
-                    break
-                else:
-                    logger.warning(f"视频流连接失败 ({retry_count + 1}/{max_retries})")
-                    time.sleep(2)  # 等待2秒后重试
-                    retry_count += 1
-            except Exception as e:
-                logger.error(f"打开视频流异常: {str(e)}")
+            if cap.isOpened():
+                break
+            else:
+                logger.warning(f"视频流连接失败 ({retry_count + 1}/{max_retries})")
                 time.sleep(2)
                 retry_count += 1
+                cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
 
         if not cap or not cap.isOpened():
-            logger.error(f"无法打开视频流: {self.task_data['stream_url']}")
+            logger.error(f"无法打开视频流: {stream_url}")
             return
 
         # 获取视频流基本信息
@@ -153,9 +430,9 @@ class DetectionTask:
         frame_count = 0
         last_report_time = time.time()
         consecutive_failures = 0
-        max_consecutive_failures = 10  # 最大连续失败次数
+        max_consecutive_failures = 10
 
-        while self.is_running:
+        while self.is_running and cap.isOpened():
             start_time = time.time()
 
             # 读取帧
@@ -168,7 +445,7 @@ class DetectionTask:
                     logger.error("连续读取失败次数过多，尝试重新连接视频流")
                     cap.release()
                     time.sleep(2)
-                    cap = cv2.VideoCapture(self.task_data['stream_url'])
+                    cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
                     consecutive_failures = 0
                     if not cap.isOpened():
                         logger.error("重新连接视频流失败")
@@ -201,7 +478,7 @@ class DetectionTask:
                     self._report_results(output_frame, algorithm_results)
                     last_report_time = current_time
 
-            # 尝试推送到RTMP
+            # 推送到RTMP
             if not self._push_frame_to_rtmp(output_frame):
                 logger.warning("推送到RTMP失败")
 
@@ -217,11 +494,7 @@ class DetectionTask:
         # 清理资源
         cap.release()
         if self.ffmpeg_process:
-            try:
-                self.ffmpeg_process.terminate()
-                self.ffmpeg_process.wait(timeout=2)
-            except Exception as e:
-                logger.error(f"停止FFmpeg失败: {str(e)}")
+            self.ffmpeg_process.terminate()
         logger.info(f"检测任务结束: {self.task_data['flight_id']}")
 
     def _draw_detection_results(self, frame, algorithm_results):
