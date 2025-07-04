@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class AlgorithmManager:
     @staticmethod
     def save_algorithm(data):
-        """保存算法配置和生成YOLO配置文件"""
+        """保存算法配置"""
         algo_dir = os.path.join(Config.ALGORITHM_STORAGE, data['algorithm_id'])
         os.makedirs(algo_dir, exist_ok=True)
 
@@ -24,18 +24,12 @@ class AlgorithmManager:
         with open(config_path, 'w') as f:
             json.dump(data, f, indent=2)
 
-
-
         # 下载模型文件 - 使用算法ID作为文件名
         model_path = os.path.join(algo_dir, f"{data['algorithm_id']}.onnx")
         download_success = AlgorithmManager._download_model(
             data['model_file_url'],
             model_path
         )
-
-        # 生成YOLO配置文件
-        yaml_path = AlgorithmManager._generate_yolo_config(data, algo_dir)
-
         if not download_success:
             logger.error(f"模型下载失败: {data['algorithm_id']}")
             return None
@@ -48,7 +42,6 @@ class AlgorithmManager:
         return {
             "algorithm_id": data['algorithm_id'],
             "config_path": config_path,
-            "yaml_path": yaml_path,
             "model_path": model_path,
             "model_dir": algo_dir
         }
@@ -117,7 +110,7 @@ class AlgorithmManager:
             'cn_name': data['algorithm_name'],
             'version': 'v5',
             'imgz': data['config']['imgz'],
-            'conf_thres': data['config']['confidence'],
+            'confidence': data['config']['confidence'],
             'iou_thres': data['config']['iou'],
             'target_cls': target_cls,
             'target_name': {target['target_key']: target['target_name'] for target in data['config']['targets']},
@@ -144,7 +137,7 @@ class AlgorithmManager:
         # 添加模型路径信息
         if 'local_model_path' not in config:
             # 尝试查找模型文件
-            model_path = os.path.join(algo_dir, f"{algorithm_id}.pt")
+            model_path = os.path.join(algo_dir, f"{algorithm_id}.onnx")
             if os.path.exists(model_path):
                 config['local_model_path'] = model_path
 

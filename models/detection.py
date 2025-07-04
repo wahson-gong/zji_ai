@@ -300,12 +300,10 @@ class DetectionTask:
         consecutive_failures = 0
         max_consecutive_failures = 10
         last_success_time = time.time()
-        print("1111111111111")
         # 添加推流重启计数器
         ffmpeg_restart_count = 0
 
         while self.is_running:
-            print("22222222222")
             start_time = time.time()
 
             # 检查超时
@@ -335,12 +333,9 @@ class DetectionTask:
             consecutive_failures = 0
             last_success_time = time.time()
 
-            print("33333333")
             # 调整帧大小
             processed_frame = self._resize_frame(frame)
 
-            print("4444444444444")
-            logger.warning("55555555555")
             # 处理所有算法
             algorithm_results = []
             for algo_id in self.task_data['algorithm_ids']:
@@ -443,7 +438,6 @@ class DetectionTask:
 
         while self.is_running and cap.isOpened():
             start_time = time.time()
-
             # 读取帧
             ret, frame = cap.read()
             if not ret:
@@ -475,8 +469,6 @@ class DetectionTask:
                 if algo_result:
                     algorithm_results.append(algo_result)
 
-            # print("algorithm_results")
-            # print(algorithm_results)
             # 在原始帧上绘制检测结果（用于推送）
             output_frame = frame.copy()
             if algorithm_results:
@@ -643,9 +635,6 @@ class DetectionTask:
                     {model_info['input_name']: input_tensor}
                 )
 
-
-                # logger.exception(f"outputs:{outputs}")
-
                 # 后处理结果
                 detections = self._postprocess_onnx_results(
                     outputs,
@@ -711,9 +700,6 @@ class DetectionTask:
 
         for detection in detections_output:
             *bbox, conf, class_id = detection
-            # logger.exception(f"bbox:{bbox}")
-            # logger.exception(f"conf:{conf}")
-            # logger.exception(f"class_id:{class_id}")
 
             # 检查置信度阈值
             if conf < confidence_threshold:
@@ -724,10 +710,21 @@ class DetectionTask:
 
             # 获取目标名称
             class_name = self._get_class_name_by_id(algo_config, class_id)
-            logger.exception(f"class_name:{class_name}")
+
+            # 将坐标从模型输入尺寸转换为原始尺寸
+            x1, y1, x2, y2 = bbox
+            # 计算缩放比例
+            scale_x = orig_w/640
+            scale_y = orig_h/640
+            # 应用缩放
+            x1 = x1 * scale_x
+            y1 = y1 * scale_y
+            x2 = x2 * scale_x
+            y2 = y2 * scale_y
+
             # 保存检测结果详细信息
             detections.append({
-                'bbox': bbox,  # [x1, y1, x2, y2]
+                'bbox':[x1, y1, x2, y2],#转换后的坐标
                 'class_id': class_id,
                 'class_name': class_name,
                 'confidence': float(conf)
@@ -773,7 +770,7 @@ class DetectionTask:
             # 创建目标计数统计
             target_counts = defaultdict(int)
             for detection in algo_result.get('detections', []):
-                target_key = detection.get('class_name', f"class_{detection.get('class_id', 'unknown')}")
+                target_key = detection.get('class_name', detection.get('class_id', 'unknown'))
                 target_counts[target_key] += 1
 
             # 转换为原有的目标列表格式

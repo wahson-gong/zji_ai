@@ -64,8 +64,7 @@ def start_ai_stream_push():
 
             # 创建AI流地址
             ai_stream_url = f"{req_data['rtmp_host'].rstrip('/')}/{flight_id}"
-            logger.exception(f"ai_stream_url:{ai_stream_url}")
-            logger.exception(f"req_data:{req_data}")
+
             # 创建新任务
             task = DetectionTask(req_data, ai_stream_url)
             if task.start():
