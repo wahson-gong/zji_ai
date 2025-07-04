@@ -16,7 +16,7 @@ def import_ai_algorithm():
         # 验证必要字段
         required_fields = [
             'algorithm_id', 'algorithm_name', 'model_file_url',
-            'model_path', 'targets', 'callback_url'
+            'model_path', 'callback_url', 'config'  # 注意：targets 现在在 config 下
         ]
         for field in required_fields:
             if field not in req_data:
@@ -25,6 +25,14 @@ def import_ai_algorithm():
                     "data": None,
                     "message": f"缺少必要字段: {field}"
                 }), 400
+
+        # 检查 config 中的 targets 是否存在
+        if 'targets' not in req_data['config']:
+            return jsonify({
+                "code": 400,
+                "data": None,
+                "message": "config 中缺少必要字段: targets"
+            }), 400
 
         # 保存算法
         result = AlgorithmManager.save_algorithm(req_data)

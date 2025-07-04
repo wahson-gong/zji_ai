@@ -24,8 +24,7 @@ class AlgorithmManager:
         with open(config_path, 'w') as f:
             json.dump(data, f, indent=2)
 
-        # 生成YOLO配置文件
-        yaml_path = AlgorithmManager._generate_yolo_config(data, algo_dir)
+
 
         # 下载模型文件 - 使用算法ID作为文件名
         model_path = os.path.join(algo_dir, f"{data['algorithm_id']}.onnx")
@@ -33,6 +32,9 @@ class AlgorithmManager:
             data['model_file_url'],
             model_path
         )
+
+        # 生成YOLO配置文件
+        yaml_path = AlgorithmManager._generate_yolo_config(data, algo_dir)
 
         if not download_success:
             logger.error(f"模型下载失败: {data['algorithm_id']}")
@@ -110,18 +112,15 @@ class AlgorithmManager:
     def _generate_yolo_config(data, algo_dir):
         """生成YOLO模型配置文件"""
         # 提取目标类别名称
-        class_names = [target['target_name'] for target in data['targets']]
-
+        target_cls =  [target['target_key'] for target in data['config']['targets']]
         yolo_config = {
-            'path': algo_dir,
-            'train': 'images/train',
-            'val': 'images/val',
-            'names': {i: name for i, name in enumerate(class_names)},
-            'nc': len(class_names),
-            'roboflow': {
-                'license': "CC BY 4.0",
-                'created': datetime.now().isoformat()
-            }
+            'cn_name': data['algorithm_name'],
+            'version': 'v5',
+            'imgz': data['config']['imgz'],
+            'conf_thres': data['config']['confidence'],
+            'iou_thres': data['config']['iou'],
+            'target_cls': target_cls,
+            'target_name': {target['target_key']: target['target_name'] for target in data['config']['targets']},
         }
 
         yaml_path = os.path.join(algo_dir, 'data.yaml')

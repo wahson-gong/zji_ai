@@ -1,3 +1,6 @@
+import json
+from datetime import datetime
+
 from flask import request, jsonify
 from models.detection import DetectionTask
 import threading
@@ -11,8 +14,24 @@ logger = logging.getLogger(__name__)
 active_tasks = {}
 task_lock = threading.Lock()
 
+DATA_DIR = "received_data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
 def start_ai_stream_push():
+    # req_data = request.get_json()
+    # if not req_data:
+    #     return jsonify({"code": 400, "data": None, "message": "请求体为空"}), 400
+    #
+    # # 生成带时间戳的文件名
+    # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # filename = f"data_{timestamp}.json"
+    # filepath = os.path.join(DATA_DIR, filename)
+    #
+    # # 保存到文件
+    # with open(filepath, 'w') as f:
+    #     json.dump(req_data, f, indent=4)
+
     """启动AI流检测接口并返回AI直播流地址"""
     try:
         req_data = request.get_json()
@@ -56,7 +75,8 @@ def start_ai_stream_push():
                 response_data = {
                     "code": 0,
                     "data": {
-                        "ai_stream_url": ai_stream_url
+                        "ai_stream_url": ai_stream_url,
+                        "flight_id": flight_id
                     },
                     "message": "检测任务已启动"
                 }

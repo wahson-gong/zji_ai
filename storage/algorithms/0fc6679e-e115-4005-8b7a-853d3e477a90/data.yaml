@@ -1,9 +1,0 @@
-path: C:\my_code\zji_ai_service\storage\algorithms\0fc6679e-e115-4005-8b7a-853d3e477a90
-train: images/train
-val: images/val
-names:
-  0: car
-nc: 1
-roboflow:
-  license: CC BY 4.0
-  created: '2025-06-30T15:06:18.188642'

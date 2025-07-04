@@ -276,9 +276,9 @@ class DetectionTask:
 
     def _run_detection(self):
         """检测主循环"""
-        # 对于大疆无人机流，使用专用解码器
-        if self.dji_stream_info:
-            return self._run_dji_detection()
+        # # 对于大疆无人机流，使用专用解码器
+        # if self.dji_stream_info:
+        #     return self._run_dji_detection()
 
         # 对于普通流，使用标准方法
         return self._run_standard_detection()
@@ -300,11 +300,12 @@ class DetectionTask:
         consecutive_failures = 0
         max_consecutive_failures = 10
         last_success_time = time.time()
-
+        print("1111111111111")
         # 添加推流重启计数器
         ffmpeg_restart_count = 0
 
         while self.is_running:
+            print("22222222222")
             start_time = time.time()
 
             # 检查超时
@@ -334,15 +335,23 @@ class DetectionTask:
             consecutive_failures = 0
             last_success_time = time.time()
 
+            print("33333333")
             # 调整帧大小
             processed_frame = self._resize_frame(frame)
 
+            print("4444444444444")
+            logger.warning("55555555555")
             # 处理所有算法
             algorithm_results = []
             for algo_id in self.task_data['algorithm_ids']:
                 algo_result = self._process_frame(processed_frame, algo_id)
+
+                logger.exception(f"algo_result:{algo_result}")
+
                 if algo_result:
                     algorithm_results.append(algo_result)
+
+
 
             # 在原始帧上绘制检测结果（用于推送）
             output_frame = frame.copy()
@@ -356,18 +365,18 @@ class DetectionTask:
                     self._report_results(output_frame, algorithm_results)
                     last_report_time = current_time
 
-                    # 推送到RTMP
-                push_success = self._push_frame_to_rtmp(output_frame)
-                if not push_success:
-                    logger.warning("推送到RTMP失败")
-                    ffmpeg_restart_count += 1
-
-                    # 检查是否超过重启限制
-                    if ffmpeg_restart_count > Config.FFMPEG_RESTART_LIMIT:
-                        logger.error("FFmpeg重启次数超过限制，停止推流")
-                        break
-                else:
-                    ffmpeg_restart_count = 0  # 重置计数器
+                # # todo 推送到RTMP
+                # push_success = self._push_frame_to_rtmp(output_frame)
+                # if not push_success:
+                #     logger.warning("推送到RTMP失败")
+                #     ffmpeg_restart_count += 1
+                #
+                #     # 检查是否超过重启限制
+                #     if ffmpeg_restart_count > Config.FFMPEG_RESTART_LIMIT:
+                #         logger.error("FFmpeg重启次数超过限制，停止推流")
+                #         break
+                # else:
+                #     ffmpeg_restart_count = 0  # 重置计数器
 
             # 控制处理速率
             elapsed = time.time() - start_time
@@ -466,6 +475,8 @@ class DetectionTask:
                 if algo_result:
                     algorithm_results.append(algo_result)
 
+            # print("algorithm_results")
+            # print(algorithm_results)
             # 在原始帧上绘制检测结果（用于推送）
             output_frame = frame.copy()
             if algorithm_results:
@@ -478,18 +489,18 @@ class DetectionTask:
                     self._report_results(output_frame, algorithm_results)
                     last_report_time = current_time
 
-            # 推送到RTMP
-            if not self._push_frame_to_rtmp(output_frame):
-                logger.warning("推送到RTMP失败")
-
-            # 控制处理速率
-            elapsed = time.time() - start_time
-            sleep_time = max(0, Config.FRAME_PROCESS_INTERVAL - elapsed)
-            time.sleep(sleep_time)
-
-            frame_count += 1
-            if frame_count % 100 == 0:
-                logger.info(f"处理帧数: {frame_count}, 当前FPS: {1 / max(0.001, elapsed + sleep_time):.1f}")
+            # # todo 推送到RTMP
+            # if not self._push_frame_to_rtmp(output_frame):
+            #     logger.warning("推送到RTMP失败")
+            #
+            # # 控制处理速率
+            # elapsed = time.time() - start_time
+            # sleep_time = max(0, Config.FRAME_PROCESS_INTERVAL - elapsed)
+            # time.sleep(sleep_time)
+            #
+            # frame_count += 1
+            # if frame_count % 100 == 0:
+            #     logger.info(f"处理帧数: {frame_count}, 当前FPS: {1 / max(0.001, elapsed + sleep_time):.1f}")
 
         # 清理资源
         cap.release()
@@ -498,21 +509,37 @@ class DetectionTask:
         logger.info(f"检测任务结束: {self.task_data['flight_id']}")
 
     def _draw_detection_results(self, frame, algorithm_results):
-        """在帧上绘制检测结果"""
-        # 简单示例：在左上角显示算法ID和帧数
-        cv2.putText(frame, f"Flight: {self.task_data['flight_id']}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-        # 显示每个算法的目标数量
-        y_offset = 60
+        """在帧上绘制检测结果：目标框和标签"""
+        # 遍历每个算法的结果
         for algo_result in algorithm_results:
-            algo_text = f"{algo_result['algorithm_id']}: "
-            for target in algo_result['targets']:
-                algo_text += f"{target['target_key']}={target['number']} "
+            detections = algo_result.get('detections', [])
 
-            cv2.putText(frame, algo_text,
-                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            y_offset += 30
+            # 遍历该算法的所有检测结果
+            for detection in detections:
+                bbox = detection['bbox']
+                class_name = detection['class_name']
+                confidence = detection['confidence']
+
+                # 解析边界框坐标 (x1, y1, x2, y2)
+                x1, y1, x2, y2 = bbox
+
+                # 绘制边界框
+                color = (0, 255, 0)  # 绿色框
+                thickness = 2
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness)
+
+                # 绘制标签背景
+                label = f"{class_name}: {confidence:.2f}"
+                text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+                cv2.rectangle(frame,
+                              (int(x1), int(y1) - text_size[1] - 5),
+                              (int(x1) + text_size[0], int(y1) - 5),
+                              color, cv2.FILLED)
+
+                # 绘制标签文本
+                cv2.putText(frame, label,
+                            (int(x1), int(y1) - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
     def _load_model(self, algorithm_id):
         """加载算法模型 - 专注于ONNX格式"""
@@ -602,7 +629,7 @@ class DetectionTask:
 
         # 获取算法配置
         algo_config = AlgorithmManager.get_algorithm(algorithm_id)
-        confidence = algo_config.get('confidence', 0.5)
+        confidence = algo_config.get('config', {}).get('confidence', 0.5)
 
         try:
             # ONNX模型处理
@@ -616,8 +643,11 @@ class DetectionTask:
                     {model_info['input_name']: input_tensor}
                 )
 
+
+                # logger.exception(f"outputs:{outputs}")
+
                 # 后处理结果
-                target_counts = self._postprocess_onnx_results(
+                detections = self._postprocess_onnx_results(
                     outputs,
                     original_shape,
                     confidence_threshold=confidence,
@@ -627,7 +657,7 @@ class DetectionTask:
                 # 构建结果
                 return {
                     "algorithm_id": algorithm_id,
-                    "targets": [{"target_key": k, "number": v} for k, v in target_counts.items()]
+                    "detections": detections  # 包含所有检测框的详细信息
                 }
             else:
                 logger.error(f"未知模型类型: {model_info['type']}")
@@ -664,26 +694,26 @@ class DetectionTask:
         return input_tensor, (original_height, original_width)
 
     def _postprocess_onnx_results(self, outputs, original_shape, confidence_threshold, algorithm_id):
-        """后处理ONNX模型输出"""
+        """后处理ONNX模型输出，返回检测框详细信息"""
         # 获取算法配置
         algo_config = AlgorithmManager.get_algorithm(algorithm_id)
         if not algo_config:
             logger.error(f"算法配置未找到: {algorithm_id}")
-            return {}
+            return []
 
         # 获取原始尺寸
         orig_h, orig_w = original_shape
-
-        # 统计目标数量
-        target_counts = defaultdict(int)
+        detections = []
 
         # 获取检测结果 - 假设第一个输出是检测结果
-        detections = outputs[0][0]  # [batch, num_detections, 6]
+        # [batch, num_detections, 6] -> [x1, y1, x2, y2, confidence, class_id]
+        detections_output = outputs[0][0]
 
-        # 遍历所有检测
-        for detection in detections:
-            # 获取置信度和类别ID
+        for detection in detections_output:
             *bbox, conf, class_id = detection
+            # logger.exception(f"bbox:{bbox}")
+            # logger.exception(f"conf:{conf}")
+            # logger.exception(f"class_id:{class_id}")
 
             # 检查置信度阈值
             if conf < confidence_threshold:
@@ -692,13 +722,18 @@ class DetectionTask:
             # 转换为整数类别
             class_id = int(class_id)
 
-            # 获取目标key
-            target_key = self._get_target_key_by_class_id(algo_config, class_id)
-            if target_key:
-                # 更新计数
-                target_counts[target_key] += 1
+            # 获取目标名称
+            class_name = self._get_class_name_by_id(algo_config, class_id)
+            logger.exception(f"class_name:{class_name}")
+            # 保存检测结果详细信息
+            detections.append({
+                'bbox': bbox,  # [x1, y1, x2, y2]
+                'class_id': class_id,
+                'class_name': class_name,
+                'confidence': float(conf)
+            })
 
-        return target_counts
+        return detections
 
     def _get_target_key_by_class_id(self, algo_config, class_id):
         """根据类别ID获取目标key"""
@@ -720,18 +755,35 @@ class DetectionTask:
         return f"class_{class_id}"
 
     def _report_results(self, frame, algorithm_results):
-        """上报检测结果"""
+        """上报检测结果 - 参数类型保持不变"""
         # 编码图像为base64
         _, buffer = cv2.imencode('.jpg', frame)
         image_base64 = base64.b64encode(buffer).decode('utf-8')
 
-        # 构建上报数据
+        # 构建上报数据 - 保持原有结构
         report_data = {
             "flight_id": self.task_data['flight_id'],
             "image_base64": image_base64,
             "detection_timestamp": int(time.time() * 1000),  # 毫秒时间戳
-            "algorithm": algorithm_results
+            "algorithm": []  # 保持原有结构
         }
+
+        # 将新的检测结果转换为原有结构
+        for algo_result in algorithm_results:
+            # 创建目标计数统计
+            target_counts = defaultdict(int)
+            for detection in algo_result.get('detections', []):
+                target_key = detection.get('class_name', f"class_{detection.get('class_id', 'unknown')}")
+                target_counts[target_key] += 1
+
+            # 转换为原有的目标列表格式
+            targets = [{"target_key": k, "number": v} for k, v in target_counts.items()]
+
+            # 添加到上报数据
+            report_data["algorithm"].append({
+                "algorithm_id": algo_result['algorithm_id'],
+                "targets": targets
+            })
 
         # 发送上报请求
         try:
@@ -743,10 +795,25 @@ class DetectionTask:
 
             # 检查响应是否符合统一格式
             if response.status_code != 200:
-                logger.error(f"结果上报失败: HTTP { self.task_data['callback_api']} --->>>{report_data} {response.status_code}")
+                logger.error(f"结果上报失败: HTTP {response.status_code}")
             else:
                 resp_data = response.json()
                 if resp_data.get('code', 0) != 0:
                     logger.error(f"结果上报返回错误: {resp_data.get('message', '')}")
         except Exception as e:
             logger.error(f"结果上报异常: {str(e)}")
+
+    def _get_class_name_by_id(self, algo_config, class_id):
+        """根据类别ID获取目标名称"""
+        # # 检查算法配置中是否有目标映射
+        # if 'targets' not in algo_config.get('config', {}):
+        #     return f"class_{class_id}"
+
+        # 查找匹配的目标
+        for target in algo_config['config']['targets']:
+            # 假设配置中有class_id字段或使用索引
+            if  target['target_key'] == class_id:
+                return target['target_name']
+
+        # 如果没有匹配，使用默认格式
+        return f"class_{class_id}"
